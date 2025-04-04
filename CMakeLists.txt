@@ -9,7 +9,7 @@ option(PROCMINE_BUILD_TESTS "Build tests" ON)
 option(PROCMINE_BUILD_EXAMPLES "Build examples" ON)
 
 find_package(SQLite3 REQUIRED)
-find_package(Boost REQUIRED COMPONENTS system filesystem)
+find_package(Boost REQUIRED COMPONENTS system filesystem graph)
 
 set(PROCMINE_SOURCES
     src/algorithm.cpp

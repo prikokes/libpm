@@ -3,7 +3,6 @@
 
 namespace procmine {
 
-// QueryResult implementation
 QueryResult::QueryResult() {}
 
 QueryResult::~QueryResult() {}
@@ -129,7 +128,6 @@ void QueryResult::set_column_names(char** col_names, int num_cols) {
     }
 }
 
-// Database implementation
 Database::Database(const std::string& db_path) : db_(nullptr) {
     int rc = sqlite3_open(db_path.c_str(), &db_);
     if (rc != SQLITE_OK) {
@@ -184,7 +182,6 @@ int Database::query_callback(void* data, int argc, char** argv, char** col_names
     return 0;
 }
 
-// Statement implementation
 Database::Statement::Statement(sqlite3_stmt* stmt) : stmt_(stmt) {}
 
 Database::Statement::~Statement() {
@@ -217,8 +214,7 @@ bool Database::Statement::execute() {
 
 std::shared_ptr<QueryResult> Database::Statement::query() {
     auto result = std::make_shared<QueryResult>();
-    
-    // Получаем имена столбцов
+
     int num_cols = sqlite3_column_count(stmt_);
     std::vector<std::string> column_names;
     for (int i = 0; i < num_cols; ++i) {
@@ -233,8 +229,7 @@ std::shared_ptr<QueryResult> Database::Statement::query() {
     
     result->set_column_names(col_names, num_cols);
     delete[] col_names;
-    
-    // Получаем данные
+
     while (sqlite3_step(stmt_) == SQLITE_ROW) {
         char** row_data = new char*[num_cols];
         for (int i = 0; i < num_cols; ++i) {
@@ -289,4 +284,4 @@ std::string Database::get_error_message() const {
     return sqlite3_errmsg(db_);
 }
 
-} // namespace procmine 
+}

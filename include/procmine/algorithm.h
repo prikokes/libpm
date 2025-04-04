@@ -7,31 +7,57 @@
 #include <unordered_set>
 #include <vector>
 
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/graphviz.hpp>
+
 namespace procmine {
+
+struct VertexProperties {
+    std::string activity;
+};
+
+struct EdgeProperties {
+    double weight;
+};
+
+using ProcessModelGraph = boost::adjacency_list<
+    boost::vecS,
+    boost::vecS,
+    boost::directedS,
+    VertexProperties,
+    EdgeProperties
+>;
+
+using Vertex = boost::graph_traits<ProcessModelGraph>::vertex_descriptor;
+using Edge = boost::graph_traits<ProcessModelGraph>::edge_descriptor;
 
 class ProcessGraph {
 public:
     ProcessGraph();
-
-    void add_node(const std::string& activity);
-
-    void add_edge(const std::string& from, const std::string& to, double weight = 1.0);
-
+    
+    Vertex add_node(const std::string& activity);
+    
+    Edge add_edge(const Vertex& from, const Vertex& to, double weight = 1.0);
+    Edge add_edge(const std::string& from, const std::string& to, double weight = 1.0);
+    
     std::vector<std::string> get_nodes() const;
-
-    struct Edge {
+    
+    struct EdgeInfo {
         std::string from;
         std::string to;
         double weight;
     };
     
-    std::vector<Edge> get_outgoing_edges(const std::string& node) const;
-
+    std::vector<EdgeInfo> get_outgoing_edges(const std::string& node) const;
+    
     std::string to_dot() const;
+
+    const ProcessModelGraph& get_graph() const { return graph_; }
     
 private:
-    std::unordered_set<std::string> nodes_;
-    std::unordered_map<std::string, std::vector<Edge>> edges_;
+    ProcessModelGraph graph_;
+    std::unordered_map<std::string, Vertex> activity_to_vertex_;
+    std::unordered_map<Vertex, std::string> vertex_to_activity_;
 };
 
 class MiningAlgorithm {

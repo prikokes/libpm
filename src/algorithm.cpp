@@ -2,78 +2,100 @@
 #include <algorithm>
 #include <sstream>
 #include <iostream>
+#include <boost/graph/breadth_first_search.hpp>
 
 namespace procmine {
 
-// ProcessGraph implementation
 ProcessGraph::ProcessGraph() {}
 
-void ProcessGraph::add_node(const std::string& activity) {
-    nodes_.insert(activity);
+Vertex ProcessGraph::add_node(const std::string& activity) {
+    auto it = activity_to_vertex_.find(activity);
+    if (it != activity_to_vertex_.end()) {
+        return it->second;
+    }
+    
+    Vertex v = boost::add_vertex(graph_);
+    graph_[v].activity = activity;
+    activity_to_vertex_[activity] = v;
+    vertex_to_activity_[v] = activity;
+    return v;
 }
 
-void ProcessGraph::add_edge(const std::string& from, const std::string& to, double weight) {
-    // Добавляем узлы, если их еще нет
-    add_node(from);
-    add_node(to);
-    
-    // Добавляем ребро
-    Edge edge;
-    edge.from = from;
-    edge.to = to;
-    edge.weight = weight;
-    
-    edges_[from].push_back(edge);
+Edge ProcessGraph::add_edge(const Vertex& from, const Vertex& to, double weight) {
+    bool exists;
+    Edge e;
+    tie(e, exists) = boost::add_edge(from, to, graph_);
+    graph_[e].weight = weight;
+    return e;
+}
+
+Edge ProcessGraph::add_edge(const std::string& from, const std::string& to, double weight) {
+    Vertex v_from = add_node(from);
+    Vertex v_to = add_node(to);
+    return add_edge(v_from, v_to, weight);
 }
 
 std::vector<std::string> ProcessGraph::get_nodes() const {
-    return std::vector<std::string>(nodes_.begin(), nodes_.end());
+    std::vector<std::string> result;
+    auto vertices = boost::vertices(graph_);
+    for (auto vit = vertices.first; vit != vertices.second; ++vit) {
+        result.push_back(graph_[*vit].activity);
+    }
+    return result;
 }
 
-std::vector<ProcessGraph::Edge> ProcessGraph::get_outgoing_edges(const std::string& node) const {
-    auto it = edges_.find(node);
-    if (it != edges_.end()) {
-        return it->second;
+std::vector<ProcessGraph::EdgeInfo> ProcessGraph::get_outgoing_edges(const std::string& node) const {
+    std::vector<EdgeInfo> result;
+    
+    auto it = activity_to_vertex_.find(node);
+    if (it == activity_to_vertex_.end()) {
+        return result;
     }
-    return {};
+    
+    Vertex v = it->second;
+    auto out_edges = boost::out_edges(v, graph_);
+    
+    for (auto eit = out_edges.first; eit != out_edges.second; ++eit) {
+        Vertex target = boost::target(*eit, graph_);
+        
+        EdgeInfo info;
+        info.from = node;
+        info.to = vertex_to_activity_.at(target);
+        info.weight = graph_[*eit].weight;
+        
+        result.push_back(info);
+    }
+    
+    return result;
 }
 
 std::string ProcessGraph::to_dot() const {
     std::stringstream ss;
-    ss << "digraph ProcessModel {\n";
-    
-    // Добавляем узлы
-    for (const auto& node : nodes_) {
-        ss << "  \"" << node << "\" [shape=box];\n";
-    }
-    
-    // Добавляем ребра
-    for (const auto& edge_list : edges_) {
-        for (const auto& edge : edge_list.second) {
-            ss << "  \"" << edge.from << "\" -> \"" << edge.to 
-               << "\" [label=\"" << edge.weight << "\"];\n";
+
+    boost::write_graphviz(
+        ss, graph_,
+        [this](std::ostream& out, const Vertex& v) {
+            out << "[label=\"" << graph_[v].activity << "\", shape=box]";
+        },
+        [this](std::ostream& out, const Edge& e) {
+            out << "[label=\"" << graph_[e].weight << "\"]";
         }
-    }
+    );
     
-    ss << "}\n";
     return ss.str();
 }
 
-// AlphaAlgorithm implementation
 AlphaAlgorithm::AlphaAlgorithm() {}
 
 std::shared_ptr<ProcessGraph> AlphaAlgorithm::mine(const EventLog& log) {
     auto result = std::make_shared<ProcessGraph>();
-    
-    // Получаем все активности
+
     auto activities = log.get_activities();
-    
-    // Добавляем узлы в граф
+
     for (const auto& activity : activities) {
         result->add_node(activity);
     }
-    
-    // Для каждого трейса находим отношения следования
+
     for (const auto& trace : log.get_traces()) {
         const auto& events = trace.get_events();
         for (size_t i = 0; i < events.size() - 1; ++i) {
@@ -84,7 +106,6 @@ std::shared_ptr<ProcessGraph> AlphaAlgorithm::mine(const EventLog& log) {
     return result;
 }
 
-// HeuristicMiner implementation
 HeuristicMiner::HeuristicMiner(double dependency_threshold, 
                              double positive_observations_threshold)
     : dependency_threshold_(dependency_threshold),
@@ -92,16 +113,13 @@ HeuristicMiner::HeuristicMiner(double dependency_threshold,
 
 std::shared_ptr<ProcessGraph> HeuristicMiner::mine(const EventLog& log) {
     auto result = std::make_shared<ProcessGraph>();
-    
-    // Получаем все активности
+
     auto activities = log.get_activities();
-    
-    // Добавляем узлы в граф
+
     for (const auto& activity : activities) {
         result->add_node(activity);
     }
-    
-    // Подсчитываем частоты переходов
+
     std::unordered_map<std::string, std::unordered_map<std::string, int>> transitions;
     
     for (const auto& trace : log.get_traces()) {
@@ -110,22 +128,19 @@ std::shared_ptr<ProcessGraph> HeuristicMiner::mine(const EventLog& log) {
             transitions[events[i].activity][events[i + 1].activity]++;
         }
     }
-    
-    // Вычисляем метрики зависимости и добавляем ребра
+
     for (const auto& from_activity : activities) {
         for (const auto& to_activity : activities) {
             if (from_activity == to_activity) continue;
             
             int a_to_b = transitions[from_activity][to_activity];
             int b_to_a = transitions[to_activity][from_activity];
-            
-            // Вычисляем метрику зависимости
+
             double dependency = 0.0;
             if (a_to_b + b_to_a > 0) {
                 dependency = ((double)(a_to_b - b_to_a)) / ((double)(a_to_b + b_to_a + 1));
             }
-            
-            // Добавляем ребро, если метрика выше порога
+
             if (dependency > dependency_threshold_ && a_to_b > positive_observations_threshold_) {
                 result->add_edge(from_activity, to_activity, dependency);
             }
@@ -135,37 +150,30 @@ std::shared_ptr<ProcessGraph> HeuristicMiner::mine(const EventLog& log) {
     return result;
 }
 
-// FrequencyAnalyzer implementation
 FrequencyAnalyzer::FrequencyAnalyzer() {}
 
 FrequencyAnalyzer::FrequencyMetrics FrequencyAnalyzer::analyze(const EventLog& log) {
     FrequencyMetrics metrics;
-    
-    // Подсчитываем частоты активностей и переходов
+
     for (const auto& trace : log.get_traces()) {
         const auto& events = trace.get_events();
-        
-        // Создаем trace variant (последовательность активностей)
+
         std::vector<std::string> variant;
         for (const auto& event : events) {
             variant.push_back(event.activity);
             metrics.activity_frequency[event.activity]++;
         }
-        
-        // Преобразуем вариант в строку
+
         std::string variant_str;
         for (const auto& activity : variant) {
             if (!variant_str.empty()) variant_str += "->";
             variant_str += activity;
         }
-        
-        // Увеличиваем счетчик этого варианта
+
         metrics.variant_frequency[variant_str]++;
-        
-        // Сохраняем вариант трейса
+
         metrics.variant_traces[variant_str] = variant;
-        
-        // Подсчитываем переходы
+
         for (size_t i = 0; i < events.size() - 1; ++i) {
             metrics.transition_frequency[events[i].activity][events[i + 1].activity]++;
         }
@@ -178,13 +186,11 @@ std::shared_ptr<ProcessGraph> FrequencyAnalyzer::build_process_graph(
     const FrequencyMetrics& metrics, double threshold) {
     
     auto graph = std::make_shared<ProcessGraph>();
-    
-    // Добавляем все активности как узлы
+
     for (const auto& activity_pair : metrics.activity_frequency) {
         graph->add_node(activity_pair.first);
     }
-    
-    // Добавляем переходы как ребра
+
     for (const auto& from_pair : metrics.transition_frequency) {
         for (const auto& to_pair : from_pair.second) {
             double frequency = static_cast<double>(to_pair.second);
@@ -198,7 +204,6 @@ std::shared_ptr<ProcessGraph> FrequencyAnalyzer::build_process_graph(
     return graph;
 }
 
-// ConformanceChecker implementation
 ConformanceChecker::ConformanceChecker(const ProcessGraph& process_model)
     : process_model_(process_model) {}
 
@@ -208,16 +213,13 @@ ConformanceChecker::ConformanceResult ConformanceChecker::check_trace(const Trac
     result.matched_activities = 0;
     
     const auto& events = trace.get_events();
-    
-    // Проверяем каждый переход
+
     for (size_t i = 0; i < events.size() - 1; ++i) {
         const std::string& from = events[i].activity;
         const std::string& to = events[i + 1].activity;
-        
-        // Получаем все исходящие ребра из текущей активности
+
         auto edges = process_model_.get_outgoing_edges(from);
-        
-        // Ищем ребро к следующей активности
+
         bool found = false;
         for (const auto& edge : edges) {
             if (edge.to == to) {
@@ -228,25 +230,22 @@ ConformanceChecker::ConformanceResult ConformanceChecker::check_trace(const Trac
         }
         
         if (!found) {
-            // Нарушение: переход не найден в модели
             std::string violation = "Transition from '" + from + "' to '" + to + "' not found in model";
             result.violations.push_back(violation);
         }
     }
-    
-    // Добавляем последнюю активность, если она есть в модели
+
     if (!events.empty()) {
         auto nodes = process_model_.get_nodes();
         if (std::find(nodes.begin(), nodes.end(), events.back().activity) != nodes.end()) {
             result.matched_activities++;
         }
     }
-    
-    // Вычисляем общую оценку соответствия (fitness)
+
     if (result.total_activities > 0) {
         result.fitness = static_cast<double>(result.matched_activities) / result.total_activities;
     } else {
-        result.fitness = 1.0; // Пустой трейс считается полностью соответствующим
+        result.fitness = 1.0;
     }
     
     return result;
@@ -273,4 +272,4 @@ double ConformanceChecker::calculate_overall_conformance(const EventLog& log) {
     return results.empty() ? 0.0 : total_fitness / results.size();
 }
 
-} // namespace procmine 
+}
