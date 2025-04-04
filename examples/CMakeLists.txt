@@ -1,0 +1,2 @@
+add_executable(simple_mining simple_mining.cpp)
+target_link_libraries(simple_mining PRIVATE procmine) 
